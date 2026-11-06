@@ -1,0 +1,42 @@
+1. ICMP traffic Issues
+- ICMP packets were being blocked
+- Prevented basic ping functionality to the local adapter and the other VMs connected on the local virtual network
+
+2. Network interface configuration
+- Restricted network visibility and communication
+
+3. Kernel parameters
+- Not configured to handle ICMP redirects
+- Default restrictive sttings prevented proper ICMP handling
+
+Solutions
+
+1. Configure kernal parameters for ICMP
+sudo sysctl -w net.ipv4.conf.all.accept_redirects=1
+sudo sysctl -w net.ipv4.conf.enp0s8.accept_redirects=1
+sudo sysctl -w net.ipv4.conf.all.send_redirects=1
+sudo sysctl -w net.ipv4.conf.enp0s8.send_redirects=1
+
+- Allowed proper network communication through the host network adapter (enp0s8)
+
+2. Reset network interface
+sudo ip link set enp0s8 down
+sudo ip link set enp0s8 multicast on
+sudo ip link set enp0s8 promisc on
+sudo ip link set enp0s8 up
+
+- Enables multicast and promiscuous mode
+- Ensures that interface can handle all necessary traffic
+
+3. Clean IP configuartion
+sudo ip addr flush dev enp0s8
+sudo ip addr add 192.168.201.2/24 dev enp0s8
+
+- Clean up the old network configuration
+- Manually added the itnerface to the IP table
+
+4. Configure Firewall rules
+sudo iptables -A INPUT -p icmp -j ACCEPT
+sudo iptables -A OUTPUT -p icmp -j ACCEPT
+
+- Enables ICMP redirect messages

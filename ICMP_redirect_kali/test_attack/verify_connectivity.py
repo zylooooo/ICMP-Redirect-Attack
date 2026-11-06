@@ -1,0 +1,105 @@
+#!/usr/bin/python3
+import subprocess
+import time
+import sys
+import os
+
+def run_cmd(cmd, description="", verbose=True):
+    """Execute command and return result with proper formatting"""
+    if verbose:
+        print(f"\n[TEST] {description}" if description else f"\nExecuting: {cmd}")
+    result = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    if result.returncode == 0:
+        if verbose:
+            print(f"[+] Success: {result.stdout.strip()}")
+        return True, result.stdout
+    else:
+        if verbose:
+            print(f"[-] Failed: {result.stderr.strip()}")
+        return False, result.stderr
+
+def check_kali_environment():
+    """Verify Kali-specific requirements"""
+    print("\n=== Checking Kali Environment ===")
+    
+    if os.geteuid() != 0:
+        print("[-] Script must be run as root")
+        return False
+    print("[+] Running as root")
+    
+    success, output = run_cmd("ip route | grep default | awk '{print $5}'", verbose=False)
+    if success:
+        print(f"[+] Default Interface: {output.strip()}")
+    else:
+        print("[-] Default Interface not found")
+    return True
+
+def test_namespace_connectivity(ns_name):
+    """Test connectivity for a specific namespace"""
+    print(f"\n=== Testing {ns_name} namespace connectivity ===")
+    tests = [
+        (f"ip netns exec {ns_name} ip addr show", "Interface configuration"),
+        (f"ip netns exec {ns_name} ip link show", "Link status"),
+        (f"ip netns exec {ns_name} ip route show", "Routing table"),
+        (f"timeout 5 ip netns exec {ns_name} ping -c 2 -W 2 192.168.1.1", "Ping to gateway"),
+        (f"timeout 5 ip netns exec {ns_name} ping -c 2 -W 2 8.8.8.8", "Internet connectivity"),
+        (f"ip netns exec {ns_name} ping -c 1 -W 2 google.com", "DNS resolution")
+    ]
+    
+    success = True
+    for cmd, desc in tests:
+        if not run_cmd(cmd, desc)[0]:
+            success = False
+    return success
+
+def verify_network():
+    """Comprehensive network verification"""
+    print("[*] Starting Network Verification\n")
+    
+    if not check_kali_environment():
+        return False
+    
+    print("\n=== Checking Network Namespaces ===")
+    success, output = run_cmd("ip netns list", "Available network namespaces")
+    if not success:
+        print("[-] No network namespaces found. Please run setup script first.")
+        return False
+
+    namespaces = ["victim", "attacker", "gateway"]
+    namespace_status = {}
+    
+    for ns in namespaces:
+        namespace_status[ns] = test_namespace_connectivity(ns)
+        run_cmd(f"ip netns exec {ns} sysctl net.ipv4.ip_forward", f"IP forwarding status ({ns})")
+        if ns == "victim":
+            run_cmd(f"ip netns exec {ns} sysctl net.ipv4.conf.all.accept_redirects", 
+                   "ICMP redirects status (victim)")
+
+    print("\n=== Test Summary ===")
+    all_passed = all(namespace_status.values())
+    
+    for ns, status in namespace_status.items():
+        print(f"{ns}: {'[+] Passed' if status else '[-] Failed'}")
+        if not status:
+            print(f"  [*] Check {ns} namespace configuration")
+    
+    if not all_passed:
+        print("\n[!] Troubleshooting Steps:")
+        print("1. Run './thorough_cleanup.sh' to clean existing configuration")
+        print("2. Re-run './setup.sh' to recreate the network setup")
+        print("3. Verify ICMP redirect settings")
+    
+    return all_passed
+
+if __name__ == "__main__":
+    try:
+        if verify_network():
+            sys.exit(0)
+        else:
+            sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n\n[!] Test interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n\n[!] Error during testing: {e}")
+        sys.exit(1)
